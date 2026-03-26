@@ -1,0 +1,284 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import sqlite3
+import pandas as pd
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+import time
+
+class AuswertungUI(ttk.Frame):
+    def __init__(self, parent, db_path, serial_manager):
+        super().__init__(parent)
+        self.db_path = db_path
+        self.serial_manager = serial_manager
+
+        self.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # TOP FRAME: Select Tournament
+        top_frame = ttk.LabelFrame(self, text="Turnierauswahl", padding=10)
+        top_frame.pack(fill="x", pady=5)
+
+        ttk.Label(top_frame, text="Turnier:").pack(side="left", padx=5)
+        self.cb_turniere = ttk.Combobox(top_frame, state="readonly", width=40)
+        self.cb_turniere.pack(side="left", padx=5)
+        self.cb_turniere.bind("<<ComboboxSelected>>", self.on_turnier_selected)
+
+        ttk.Button(top_frame, text="Turniere laden", command=self.load_turniere).pack(side="left", padx=5)
+
+        # MIDDLE FRAME (Paned Window)
+        self.paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        self.paned.pack(fill="both", expand=True, pady=5)
+
+        # LEFT SIDE: Participants (Shooter + Class)
+        left_frame = ttk.LabelFrame(self.paned, text="Teilnehmer (Schütze - Klasse)", padding=5)
+        self.paned.add(left_frame, weight=1)
+
+        search_f = ttk.Frame(left_frame)
+        search_f.pack(fill="x")
+        ttk.Label(search_f, text="Suchen/Filtern:").pack(side="left", padx=2)
+        self.search_part_var = tk.StringVar()
+        self.search_part_var.trace_add("write", lambda *args: self.load_participants())
+        ttk.Entry(search_f, textvariable=self.search_part_var).pack(side="left", fill="x", expand=True, padx=2)
+
+        self.tree_part = ttk.Treeview(left_frame, columns=("ID", "Schütze", "Klasse", "K_ID"), show="headings", selectmode="browse")
+        self.tree_part.heading("Schütze", text="Schütze", command=lambda: self.sort_part_column("Schütze", False))
+        self.tree_part.heading("Klasse", text="Klasse", command=lambda: self.sort_part_column("Klasse", False))
+        self.tree_part.column("ID", width=0, stretch=False)
+        self.tree_part.column("K_ID", width=0, stretch=False)
+        self.tree_part.pack(fill="both", expand=True, pady=5)
+        self.tree_part.bind("<<TreeviewSelect>>", self.on_participant_selected)
+
+        self.btn_start = ttk.Button(left_frame, text="Auswertung starten", state="disabled", command=self.start_auswertung)
+        self.btn_start.pack(fill="x", pady=5)
+
+        # RIGHT SIDE: Results
+        right_frame = ttk.LabelFrame(self.paned, text="Ergebnisse", padding=5)
+        self.paned.add(right_frame, weight=2)
+
+        res_search_f = ttk.Frame(right_frame)
+        res_search_f.pack(fill="x")
+        ttk.Label(res_search_f, text="Suchen/Filtern:").pack(side="left", padx=2)
+        self.search_res_var = tk.StringVar()
+        self.search_res_var.trace_add("write", lambda *args: self.load_results())
+        ttk.Entry(res_search_f, textvariable=self.search_res_var).pack(side="left", fill="x", expand=True, padx=2)
+
+        self.tree_res = ttk.Treeview(right_frame, columns=("Name", "Klasse", "Schuss", "Ringzahl", "Teiler", "Winkel", "Gültigkeit"), show="headings")
+        for col in self.tree_res["columns"]:
+            self.tree_res.heading(col, text=col, command=lambda c=col: self.sort_res_column(c, False))
+            self.tree_res.column(col, anchor="center", width=80)
+        self.tree_res.column("Name", width=120)
+        self.tree_res.column("Klasse", width=100)
+        self.tree_res.pack(fill="both", expand=True, pady=5)
+
+        export_f = ttk.Frame(right_frame)
+        export_f.pack(fill="x")
+        ttk.Button(export_f, text="Export Excel", command=self.export_excel).pack(side="right", padx=5)
+        ttk.Button(export_f, text="Export PDF", command=self.export_pdf).pack(side="right", padx=5)
+
+        # BOTTOM FRAME: Log
+        log_frame = ttk.LabelFrame(self, text="Kommunikation mit DISAG RM III", padding=5)
+        log_frame.pack(fill="x", pady=5)
+        self.txt_log = tk.Text(log_frame, height=8, state="disabled", bg="#1e1e1e", fg="#d4d4d4", font=("Consolas", 10))
+        self.txt_log.pack(fill="both", expand=True)
+        self.txt_log.tag_config("in", foreground="#b5cea8")
+        self.txt_log.tag_config("out", foreground="#569cd6")
+        self.txt_log.tag_config("sys", foreground="#ce9178")
+        self.txt_log.tag_config("err", foreground="#f44747")
+
+        self.serial_manager.add_log_widget(self.txt_log)
+
+        self.current_turnier_id = None
+        self.active_entry_id = None
+        self.active_klasse_id = None
+        self.sge_target = 0
+        self.current_shots = 0
+
+    def get_db_connection(self):
+        return sqlite3.connect(self.db_path)
+
+    def load_turniere(self):
+        conn = self.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name FROM Turniere ORDER BY id DESC")
+        self.turniere_data = cursor.fetchall()
+        conn.close()
+
+        values = [f"{t[0]} - {t[1]}" for t in self.turniere_data]
+        self.cb_turniere.config(values=values)
+        if values:
+            self.cb_turniere.set(values[0])
+            self.on_turnier_selected()
+
+    def on_turnier_selected(self, event=None):
+        sel = self.cb_turniere.get()
+        if not sel: return
+        self.current_turnier_id = int(sel.split(" - ")[0])
+        self.load_participants()
+        self.btn_start.config(state="disabled")
+        for i in self.tree_res.get_children(): self.tree_res.delete(i)
+
+    def load_participants(self):
+        if not self.current_turnier_id: return
+        for i in self.tree_part.get_children(): self.tree_part.delete(i)
+
+        st = f"%{self.search_part_var.get()}%"
+        conn = self.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT tsk.id, s.name, k.name, k.id
+            FROM Turnier_Schuetzen_Klassen tsk
+            JOIN Schuetzen s ON tsk.schuetze_id = s.id
+            JOIN Klassen k ON tsk.klasse_id = k.id
+            WHERE tsk.turnier_id = ? AND (s.name LIKE ? OR k.name LIKE ?)
+        ''', (self.current_turnier_id, st, st))
+
+        for row in cursor.fetchall():
+            self.tree_part.insert("", "end", values=row)
+        conn.close()
+
+    def sort_part_column(self, col, reverse):
+        l = [(self.tree_part.set(k, col), k) for k in self.tree_part.get_children('')]
+        try: l.sort(key=lambda t: float(t[0]), reverse=reverse)
+        except ValueError: l.sort(reverse=reverse)
+        for index, (val, k) in enumerate(l): self.tree_part.move(k, '', index)
+        self.tree_part.heading(col, command=lambda: self.sort_part_column(col, not reverse))
+
+    def on_participant_selected(self, event=None):
+        sel = self.tree_part.selection()
+        if not sel:
+            self.btn_start.config(state="disabled")
+            return
+        vals = self.tree_part.item(sel[0])['values']
+        self.active_entry_id = vals[0]
+        self.active_klasse_id = vals[3]
+        self.btn_start.config(state="normal")
+        self.load_results()
+
+    def start_auswertung(self):
+        if not self.serial_manager.is_connected():
+            messagebox.showerror("Fehler", "Gerät ist nicht verbunden! Bitte im Reiter 'Verbindung' verbinden.")
+            return
+
+        # Fetch settings for this class
+        conn = self.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT sch, ria, tea, teg, ssc, sge
+            FROM Turnier_Klassen
+            WHERE turnier_id=? AND klasse_id=?
+        ''', (self.current_turnier_id, self.active_klasse_id))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            messagebox.showerror("Fehler", "Einstellungen für diese Klasse nicht gefunden.")
+            return
+
+        sch, ria, tea, teg, ssc, sge = row
+        self.sge_target = sge
+        self.current_shots = 0
+
+        # Send configuration to device
+        # SZI=0 and KAL=22 are fixed values as per instructions
+        cmd = f"SCH={sch};RIA={ria};KAL=22;SSC={ssc};SZI=0;TEA={tea};TEG={teg};SGE={sge};"
+
+        # We need to configure the serial manager to handle the incoming shot data and save it to DB
+        self.serial_manager.set_active_auswertung(self.active_entry_id, self.sge_target, self.on_shot_received)
+
+        self.serial_manager.log(f"Starte Auswertung für Eintrag ID {self.active_entry_id}. Sende Konfiguration...")
+        self.serial_manager.send_prot(cmd)
+
+    def on_shot_received(self):
+        # Callback from Serial Manager when a shot is successfully parsed and saved to DB
+        # This is called from a background thread, so we must use after() to update the UI
+        self.after(0, self.load_results)
+
+    def load_results(self):
+        if not self.active_entry_id: return
+        for i in self.tree_res.get_children(): self.tree_res.delete(i)
+
+        st = f"%{self.search_res_var.get()}%"
+        conn = self.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT s.name, k.name, e.schuss_nr, e.ringzahl, e.teiler, e.winkel, e.gueltigkeit
+            FROM Ergebnisse e
+            JOIN Turnier_Schuetzen_Klassen tsk ON e.turnier_schuetze_klasse_id = tsk.id
+            JOIN Schuetzen s ON tsk.schuetze_id = s.id
+            JOIN Klassen k ON tsk.klasse_id = k.id
+            WHERE e.turnier_schuetze_klasse_id = ?
+            AND (s.name LIKE ? OR k.name LIKE ? OR e.schuss_nr LIKE ? OR e.ringzahl LIKE ? OR e.teiler LIKE ? OR e.gueltigkeit LIKE ?)
+            ORDER BY e.schuss_nr ASC
+        ''', (self.active_entry_id, st, st, st, st, st, st))
+
+        for row in cursor.fetchall():
+            self.tree_res.insert("", "end", values=row)
+        conn.close()
+
+    def sort_res_column(self, col, reverse):
+        l = [(self.tree_res.set(k, col), k) for k in self.tree_res.get_children('')]
+        try: l.sort(key=lambda t: float(t[0]), reverse=reverse)
+        except ValueError: l.sort(reverse=reverse)
+        for index, (val, k) in enumerate(l): self.tree_res.move(k, '', index)
+        self.tree_res.heading(col, command=lambda: self.sort_res_column(col, not reverse))
+
+    def get_res_data_as_df(self):
+        # Fetch current data from treeview considering filters and sorting
+        data = []
+        for i in self.tree_res.get_children():
+            data.append(self.tree_res.item(i)['values'])
+        cols = ["Name", "Klasse", "Schuss", "Ringzahl", "Teiler", "Winkel", "Gültigkeit"]
+        return pd.DataFrame(data, columns=cols)
+
+    def export_excel(self):
+        df = self.get_res_data_as_df()
+        if df.empty:
+            messagebox.showinfo("Export", "Keine Daten zum Exportieren vorhanden.")
+            return
+
+        path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")])
+        if path:
+            df.to_excel(path, index=False)
+            messagebox.showinfo("Export", f"Erfolgreich als Excel gespeichert:\n{path}")
+
+    def export_pdf(self):
+        df = self.get_res_data_as_df()
+        if df.empty:
+            messagebox.showinfo("Export", "Keine Daten zum Exportieren vorhanden.")
+            return
+
+        path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
+        if path:
+            c = canvas.Canvas(path, pagesize=letter)
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(50, 750, "Auswertung - DISAG RM III")
+
+            # Additional metadata if possible
+            sel = self.tree_part.selection()
+            if sel:
+                vals = self.tree_part.item(sel[0])['values']
+                c.setFont("Helvetica", 12)
+                c.drawString(50, 730, f"Schütze: {vals[1]} | Klasse: {vals[2]}")
+
+            c.setFont("Helvetica-Bold", 10)
+            y = 700
+            cols = ["Name", "Klasse", "Schuss", "Ringzahl", "Teiler", "Winkel", "Gültigkeit"]
+            x_pos = [50, 150, 230, 290, 360, 420, 480]
+
+            for i, col in enumerate(cols):
+                c.drawString(x_pos[i], y, col)
+
+            y -= 20
+            c.setFont("Helvetica", 10)
+
+            for index, row in df.iterrows():
+                for i, val in enumerate(row):
+                    c.drawString(x_pos[i], y, str(val))
+                y -= 15
+                if y < 50:
+                    c.showPage()
+                    y = 750
+                    c.setFont("Helvetica", 10)
+
+            c.save()
+            messagebox.showinfo("Export", f"Erfolgreich als PDF gespeichert:\n{path}")
