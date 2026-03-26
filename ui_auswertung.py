@@ -51,6 +51,9 @@ class AuswertungUI(ttk.Frame):
         self.btn_start = ttk.Button(left_frame, text="Auswertung starten", state="disabled", command=self.start_auswertung)
         self.btn_start.pack(fill="x", pady=5)
 
+        self.btn_show_all = ttk.Button(left_frame, text="Alle anzeigen", state="disabled", command=self.show_all_results)
+        self.btn_show_all.pack(fill="x", pady=5)
+
         # RIGHT SIDE: Results
         right_frame = ttk.LabelFrame(self.paned, text="Ergebnisse", padding=5)
         self.paned.add(right_frame, weight=2)
@@ -92,6 +95,7 @@ class AuswertungUI(ttk.Frame):
         self.active_klasse_id = None
         self.sge_target = 0
         self.current_shots = 0
+        self.show_all_mode = False
 
     def get_db_connection(self):
         return sqlite3.connect(self.db_path)
@@ -113,8 +117,10 @@ class AuswertungUI(ttk.Frame):
         sel = self.cb_turniere.get()
         if not sel: return
         self.current_turnier_id = int(sel.split(" - ")[0])
+        self.show_all_mode = False
         self.load_participants()
         self.btn_start.config(state="disabled")
+        self.btn_show_all.config(state="normal")
         for i in self.tree_res.get_children(): self.tree_res.delete(i)
 
     def load_participants(self):
@@ -151,7 +157,13 @@ class AuswertungUI(ttk.Frame):
         vals = self.tree_part.item(sel[0])['values']
         self.active_entry_id = vals[0]
         self.active_klasse_id = vals[3]
+        self.show_all_mode = False
         self.btn_start.config(state="normal")
+        self.load_results()
+
+    def show_all_results(self):
+        if not self.current_turnier_id: return
+        self.show_all_mode = True
         self.load_results()
 
     def start_auswertung(self):
@@ -183,10 +195,13 @@ class AuswertungUI(ttk.Frame):
         cmd = f"SCH={sch};RIA={ria};KAL=22;SSC={ssc};SZI=0;TEA={tea};TEG={teg};SGE={sge};"
 
         # We need to configure the serial manager to handle the incoming shot data and save it to DB
-        self.serial_manager.set_active_auswertung(self.active_entry_id, self.sge_target, self.on_shot_received)
+        self.serial_manager.set_active_auswertung(self.active_entry_id, self.sge_target, self.on_shot_received, self.on_wsc_error)
 
         self.serial_manager.log(f"Starte Auswertung für Eintrag ID {self.active_entry_id}. Sende Konfiguration...")
         self.serial_manager.send_prot(cmd)
+
+    def on_wsc_error(self, wsc_code):
+        self.after(0, lambda: WSCErrorWindow(self, self.db_path, self.serial_manager, self.active_entry_id, wsc_code, self.on_shot_received))
 
     def on_shot_received(self):
         # Callback from Serial Manager when a shot is successfully parsed and saved to DB
@@ -194,22 +209,36 @@ class AuswertungUI(ttk.Frame):
         self.after(0, self.load_results)
 
     def load_results(self):
-        if not self.active_entry_id: return
         for i in self.tree_res.get_children(): self.tree_res.delete(i)
 
         st = f"%{self.search_res_var.get()}%"
         conn = self.get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT s.name, k.name, e.schuss_nr, e.ringzahl, e.teiler, e.winkel, e.gueltigkeit
-            FROM Ergebnisse e
-            JOIN Turnier_Schuetzen_Klassen tsk ON e.turnier_schuetze_klasse_id = tsk.id
-            JOIN Schuetzen s ON tsk.schuetze_id = s.id
-            JOIN Klassen k ON tsk.klasse_id = k.id
-            WHERE e.turnier_schuetze_klasse_id = ?
-            AND (s.name LIKE ? OR k.name LIKE ? OR e.schuss_nr LIKE ? OR e.ringzahl LIKE ? OR e.teiler LIKE ? OR e.gueltigkeit LIKE ?)
-            ORDER BY e.schuss_nr ASC
-        ''', (self.active_entry_id, st, st, st, st, st, st))
+
+        if self.show_all_mode:
+            if not self.current_turnier_id: return
+            cursor.execute('''
+                SELECT s.name, k.name, e.schuss_nr, e.ringzahl, e.teiler, e.winkel, e.gueltigkeit
+                FROM Ergebnisse e
+                JOIN Turnier_Schuetzen_Klassen tsk ON e.turnier_schuetze_klasse_id = tsk.id
+                JOIN Schuetzen s ON tsk.schuetze_id = s.id
+                JOIN Klassen k ON tsk.klasse_id = k.id
+                WHERE tsk.turnier_id = ?
+                AND (s.name LIKE ? OR k.name LIKE ? OR e.schuss_nr LIKE ? OR e.ringzahl LIKE ? OR e.teiler LIKE ? OR e.gueltigkeit LIKE ?)
+                ORDER BY e.id ASC
+            ''', (self.current_turnier_id, st, st, st, st, st, st))
+        else:
+            if not self.active_entry_id: return
+            cursor.execute('''
+                SELECT s.name, k.name, e.schuss_nr, e.ringzahl, e.teiler, e.winkel, e.gueltigkeit
+                FROM Ergebnisse e
+                JOIN Turnier_Schuetzen_Klassen tsk ON e.turnier_schuetze_klasse_id = tsk.id
+                JOIN Schuetzen s ON tsk.schuetze_id = s.id
+                JOIN Klassen k ON tsk.klasse_id = k.id
+                WHERE e.turnier_schuetze_klasse_id = ?
+                AND (s.name LIKE ? OR k.name LIKE ? OR e.schuss_nr LIKE ? OR e.ringzahl LIKE ? OR e.teiler LIKE ? OR e.gueltigkeit LIKE ?)
+                ORDER BY e.schuss_nr ASC
+            ''', (self.active_entry_id, st, st, st, st, st, st))
 
         for row in cursor.fetchall():
             self.tree_res.insert("", "end", values=row)
@@ -282,3 +311,171 @@ class AuswertungUI(ttk.Frame):
 
             c.save()
             messagebox.showinfo("Export", f"Erfolgreich als PDF gespeichert:\n{path}")
+
+
+class WSCErrorWindow(tk.Toplevel):
+    def __init__(self, parent, db_path, serial_manager, entry_id, wsc_code, callback):
+        super().__init__(parent)
+        self.db_path = db_path
+        self.serial_manager = serial_manager
+        self.entry_id = entry_id
+        self.callback = callback
+
+        self.title("Überprüfung nötig")
+        self.geometry("400x350")
+        self.grab_set()
+
+        ttk.Label(self, text=f"Das Gerät meldet einen Fehler: {wsc_code}", font=("Helvetica", 10, "bold")).pack(pady=15)
+        ttk.Label(self, text="Bitte wählen Sie das weitere Vorgehen:").pack(pady=5)
+
+        ttk.Button(self, text="Wiederholen", command=self.do_wiederholen, width=30).pack(pady=10)
+        ttk.Button(self, text="Auswertung abbrechen und löschen", command=self.do_abbrechen, width=30).pack(pady=10)
+        ttk.Button(self, text="Kontrolle", command=self.do_kontrolle, width=30).pack(pady=10)
+        ttk.Button(self, text="Alles OK", command=self.do_alles_ok, width=30).pack(pady=10)
+
+    def get_last_target_shots(self):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('''
+            SELECT id, schuss_nr, ringzahl, teiler, gueltigkeit
+            FROM Ergebnisse
+            WHERE turnier_schuetze_klasse_id=? AND gueltigkeit != 'Gültig'
+            ORDER BY schuss_nr ASC
+        ''', (self.entry_id,))
+        shots = c.fetchall()
+
+        c.execute('SELECT COUNT(*) FROM Ergebnisse WHERE turnier_schuetze_klasse_id=?', (self.entry_id,))
+        total_shots = c.fetchone()[0]
+        conn.close()
+        return shots, total_shots
+
+    def do_wiederholen(self):
+        self.serial_manager.send_prot("WID")
+        self.destroy()
+
+    def do_abbrechen(self):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("DELETE FROM Ergebnisse WHERE turnier_schuetze_klasse_id=?", (self.entry_id,))
+        conn.commit()
+        conn.close()
+        self.serial_manager.send_prot("ABR")
+        self.callback()
+        self.destroy()
+
+    def do_alles_ok(self):
+        shots, total_shots = self.get_last_target_shots()
+        if not shots:
+            self.serial_manager.send_prot("EDI=0;0")
+        else:
+            edi_cmd = f"EDI={total_shots};{len(shots)}"
+            self.serial_manager.send_prot(edi_cmd)
+
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            for shot in shots:
+                shot_id, schuss_nr, ringzahl, teiler, gueltigkeit = shot
+                s_cmd = f"S={schuss_nr};{ringzahl};{teiler};U"
+                self.serial_manager.send_prot(s_cmd)
+                c.execute("UPDATE Ergebnisse SET gueltigkeit='Überprüft' WHERE id=?", (shot_id,))
+            conn.commit()
+            conn.close()
+
+        self.callback()
+        self.destroy()
+
+    def do_kontrolle(self):
+        shots, total_shots = self.get_last_target_shots()
+        self.destroy()
+        KontrolleWindow(self.master, self.db_path, self.serial_manager, self.entry_id, shots, total_shots, self.callback)
+
+
+class KontrolleWindow(tk.Toplevel):
+    def __init__(self, parent, db_path, serial_manager, entry_id, shots, total_shots, callback):
+        super().__init__(parent)
+        self.db_path = db_path
+        self.serial_manager = serial_manager
+        self.entry_id = entry_id
+        self.shots = shots
+        self.total_shots = total_shots
+        self.callback = callback
+        self.entries = []
+
+        self.title("Manuelle Kontrolle")
+        self.geometry("500x400")
+        self.grab_set()
+
+        if not self.shots:
+            ttk.Label(self, text="Keine zu überprüfenden Schüsse gefunden.").pack(pady=20)
+            ttk.Button(self, text="Schließen", command=self.destroy).pack()
+            return
+
+        frame = ttk.Frame(self)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        ttk.Label(frame, text="Schuss").grid(row=0, column=0, padx=5, pady=5)
+        ttk.Label(frame, text="Ringwert").grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(frame, text="Teilerwert").grid(row=0, column=2, padx=5, pady=5)
+
+        for i, shot in enumerate(self.shots):
+            shot_id, schuss_nr, ringzahl, teiler, gueltigkeit = shot
+
+            ttk.Label(frame, text=f"{schuss_nr}").grid(row=i+1, column=0, padx=5, pady=5)
+
+            ring_var = tk.StringVar(value=str(ringzahl))
+            teiler_var = tk.StringVar(value=str(teiler))
+
+            e_ring = ttk.Entry(frame, textvariable=ring_var, width=10)
+            e_ring.grid(row=i+1, column=1, padx=5, pady=5)
+
+            e_teiler = ttk.Entry(frame, textvariable=teiler_var, width=10)
+            e_teiler.grid(row=i+1, column=2, padx=5, pady=5)
+
+            self.entries.append({
+                "id": shot_id,
+                "schuss_nr": schuss_nr,
+                "orig_ring": ringzahl,
+                "orig_teiler": teiler,
+                "ring_var": ring_var,
+                "teiler_var": teiler_var
+            })
+
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill="x", pady=10)
+
+        ttk.Button(btn_frame, text="Änderung senden", command=self.send_changes).pack(side="left", padx=20)
+        ttk.Button(btn_frame, text="Abbrechen", command=self.destroy).pack(side="right", padx=20)
+
+    def send_changes(self):
+        edi_cmd = f"EDI={self.total_shots};{len(self.shots)}"
+        self.serial_manager.send_prot(edi_cmd)
+
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+
+        for entry in self.entries:
+            try:
+                new_ring = float(entry["ring_var"].get().replace(',', '.'))
+                new_teiler = float(entry["teiler_var"].get().replace(',', '.'))
+            except ValueError:
+                # Fallback to original if invalid input
+                new_ring = entry["orig_ring"]
+                new_teiler = entry["orig_teiler"]
+
+            is_changed = (new_ring != entry["orig_ring"]) or (new_teiler != entry["orig_teiler"])
+            flag = "V" if is_changed else "U"
+
+            s_cmd = f"S={entry['schuss_nr']};{new_ring};{new_teiler};{flag}"
+            self.serial_manager.send_prot(s_cmd)
+
+            c.execute('''
+                UPDATE Ergebnisse
+                SET ringzahl=?, teiler=?, gueltigkeit='Überprüft'
+                WHERE id=?
+            ''', (new_ring, new_teiler, entry["id"]))
+
+        conn.commit()
+        conn.close()
+
+        self.callback()
+        self.destroy()
