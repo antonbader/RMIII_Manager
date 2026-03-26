@@ -184,9 +184,13 @@ class SerialManager:
                                 self.log("Gerät ist bereit (WSC=1K). Bitte Scheiben einführen.", "sys")
                             elif line.startswith("SCH="):
                                 self.parse_and_save_shot(line_clean)
-                            elif line.startswith("WSC=-5"):
+                            elif line.startswith("WSC=-"):
                                 if self.on_wsc_error_callback:
-                                    self.on_wsc_error_callback(line_clean)
+                                    import re
+                                    match = re.search(r'WSC=-(\d+)', line_clean)
+                                    if match:
+                                        num_shots = int(match.group(1))
+                                        self.on_wsc_error_callback(line_clean, num_shots)
                 time.sleep(0.01)
             except Exception as e:
                 self.log(f"Verbindungsfehler im Reader: {e}", "err")

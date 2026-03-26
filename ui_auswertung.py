@@ -200,8 +200,8 @@ class AuswertungUI(ttk.Frame):
         self.serial_manager.log(f"Starte Auswertung für Eintrag ID {self.active_entry_id}. Sende Konfiguration...")
         self.serial_manager.send_prot(cmd)
 
-    def on_wsc_error(self, wsc_code):
-        self.after(0, lambda: WSCErrorWindow(self, self.db_path, self.serial_manager, self.active_entry_id, wsc_code, self.on_shot_received))
+    def on_wsc_error(self, wsc_code, num_shots):
+        self.after(0, lambda: WSCErrorWindow(self, self.db_path, self.serial_manager, self.active_entry_id, wsc_code, num_shots, self.on_shot_received))
 
     def on_shot_received(self):
         # Callback from Serial Manager when a shot is successfully parsed and saved to DB
@@ -314,11 +314,12 @@ class AuswertungUI(ttk.Frame):
 
 
 class WSCErrorWindow(tk.Toplevel):
-    def __init__(self, parent, db_path, serial_manager, entry_id, wsc_code, callback):
+    def __init__(self, parent, db_path, serial_manager, entry_id, wsc_code, num_shots, callback):
         super().__init__(parent)
         self.db_path = db_path
         self.serial_manager = serial_manager
         self.entry_id = entry_id
+        self.num_shots = num_shots
         self.callback = callback
 
         self.title("Überprüfung nötig")
@@ -336,13 +337,19 @@ class WSCErrorWindow(tk.Toplevel):
     def get_last_target_shots(self):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
+
+        # Get the last `num_shots` for this shooter
         c.execute('''
             SELECT id, schuss_nr, ringzahl, teiler, gueltigkeit
             FROM Ergebnisse
-            WHERE turnier_schuetze_klasse_id=? AND gueltigkeit != 'Gültig'
-            ORDER BY schuss_nr ASC
-        ''', (self.entry_id,))
-        shots = c.fetchall()
+            WHERE turnier_schuetze_klasse_id=?
+            ORDER BY schuss_nr DESC
+            LIMIT ?
+        ''', (self.entry_id, self.num_shots))
+        last_n_shots = c.fetchall()
+
+        # We need them in ascending order and only those that are NOT 'Gültig'
+        shots = sorted([s for s in last_n_shots if s[4] != 'Gültig'], key=lambda x: x[1])
 
         c.execute('SELECT COUNT(*) FROM Ergebnisse WHERE turnier_schuetze_klasse_id=?', (self.entry_id,))
         total_shots = c.fetchone()[0]
