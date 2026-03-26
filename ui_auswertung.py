@@ -380,11 +380,29 @@ class WSCErrorWindow(tk.Toplevel):
 
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
-            for shot in shots:
-                shot_id, schuss_nr, ringzahl, teiler, gueltigkeit = shot
+
+            # Fetch ALL shots for this shooter to send them back to the device
+            c.execute('''
+                SELECT id, schuss_nr, ringzahl, teiler
+                FROM Ergebnisse
+                WHERE turnier_schuetze_klasse_id=?
+                ORDER BY schuss_nr ASC
+            ''', (self.entry_id,))
+            all_shots = c.fetchall()
+
+            # Track which ones are the "last targets" to update their status
+            last_target_ids = {s[0] for s in shots}
+
+            for shot in all_shots:
+                shot_id, schuss_nr, ringzahl, teiler = shot
+                # All shots (old and new unchanged) get 'U'
                 s_cmd = f"S={schuss_nr};{ringzahl};{teiler};U"
                 self.serial_manager.send_prot(s_cmd)
-                c.execute("UPDATE Ergebnisse SET gueltigkeit='Überprüft' WHERE id=?", (shot_id,))
+
+                # Only update the database status for the recently checked ones
+                if shot_id in last_target_ids:
+                    c.execute("UPDATE Ergebnisse SET gueltigkeit='Überprüft' WHERE id=?", (shot_id,))
+
             conn.commit()
             conn.close()
 
@@ -460,6 +478,8 @@ class KontrolleWindow(tk.Toplevel):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
 
+        # Build a map of edited shots
+        edited_shots = {}
         for entry in self.entries:
             try:
                 new_ring = float(entry["ring_var"].get().replace(',', '.'))
@@ -472,14 +492,41 @@ class KontrolleWindow(tk.Toplevel):
             is_changed = (new_ring != entry["orig_ring"]) or (new_teiler != entry["orig_teiler"])
             flag = "V" if is_changed else "U"
 
-            s_cmd = f"S={entry['schuss_nr']};{new_ring};{new_teiler};{flag}"
-            self.serial_manager.send_prot(s_cmd)
+            edited_shots[entry["id"]] = {
+                "new_ring": new_ring,
+                "new_teiler": new_teiler,
+                "flag": flag,
+                "schuss_nr": entry["schuss_nr"]
+            }
 
-            c.execute('''
-                UPDATE Ergebnisse
-                SET ringzahl=?, teiler=?, gueltigkeit='Überprüft'
-                WHERE id=?
-            ''', (new_ring, new_teiler, entry["id"]))
+        # Fetch ALL shots for this shooter
+        c.execute('''
+            SELECT id, schuss_nr, ringzahl, teiler
+            FROM Ergebnisse
+            WHERE turnier_schuetze_klasse_id=?
+            ORDER BY schuss_nr ASC
+        ''', (self.entry_id,))
+        all_shots = c.fetchall()
+
+        for shot in all_shots:
+            shot_id, schuss_nr, ringzahl, teiler = shot
+
+            if shot_id in edited_shots:
+                # It's one of the shots from the last target that could be edited
+                edit_data = edited_shots[shot_id]
+                s_cmd = f"S={schuss_nr};{edit_data['new_ring']};{edit_data['new_teiler']};{edit_data['flag']}"
+                self.serial_manager.send_prot(s_cmd)
+
+                # Update DB
+                c.execute('''
+                    UPDATE Ergebnisse
+                    SET ringzahl=?, teiler=?, gueltigkeit='Überprüft'
+                    WHERE id=?
+                ''', (edit_data['new_ring'], edit_data['new_teiler'], shot_id))
+            else:
+                # It's an older shot (not part of the current target/kontrolle)
+                s_cmd = f"S={schuss_nr};{ringzahl};{teiler};U"
+                self.serial_manager.send_prot(s_cmd)
 
         conn.commit()
         conn.close()
