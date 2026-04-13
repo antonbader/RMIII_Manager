@@ -58,6 +58,10 @@ class TurniereUI(ttk.Frame):
         self.bottom_frame = ttk.LabelFrame(self.paned, text="Turnier-Details (Bitte Turnier auswählen)", padding=10)
         self.paned.add(self.bottom_frame, weight=2)
 
+        # Grid config to let the lists expand but keep the bottom buttons visible
+        self.bottom_frame.rowconfigure(0, weight=1)
+        self.bottom_frame.columnconfigure(0, weight=1)
+
         self.setup_bottom_frame()
 
         self.load_turniere()
@@ -149,7 +153,7 @@ class TurniereUI(ttk.Frame):
     def setup_bottom_frame(self):
         # Two lists for Classes
         klassen_frame = ttk.Frame(self.bottom_frame)
-        klassen_frame.pack(fill="both", expand=True, pady=5)
+        klassen_frame.grid(row=0, column=0, sticky="nsew", pady=5)
 
         # Left: Available Classes
         left_frame = ttk.Frame(klassen_frame)
@@ -177,7 +181,7 @@ class TurniereUI(ttk.Frame):
 
         # Bottom Buttons
         btn_frame = ttk.Frame(self.bottom_frame)
-        btn_frame.pack(fill="x", pady=5)
+        btn_frame.grid(row=1, column=0, sticky="ew", pady=5)
         ttk.Button(btn_frame, text="Klassen-Einstellungen bearbeiten", command=self.open_settings).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Schützen hinzufügen", command=self.open_schuetzen_window).pack(side="right", padx=5)
 

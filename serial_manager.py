@@ -20,6 +20,7 @@ class SerialManager:
         self.sge_target = 0
         self.current_shots = 0
         self.on_shot_callback = None
+        self.on_wsc_error_callback = None
 
     def add_log_widget(self, widget):
         if widget not in self.log_widgets:
@@ -89,11 +90,12 @@ class SerialManager:
                 self.log(f"Sende-Fehler: {e}", "err")
         threading.Thread(target=run, daemon=True).start()
 
-    def set_active_auswertung(self, entry_id, sge_target, callback):
+    def set_active_auswertung(self, entry_id, sge_target, callback, error_callback=None):
         self.active_entry_id = entry_id
         self.sge_target = sge_target
         self.current_shots = 0
         self.on_shot_callback = callback
+        self.on_wsc_error_callback = error_callback
         self.log(f"Auswertung konfiguriert: Eintrag={entry_id}, Max. Schüsse={sge_target}", "sys")
 
     def parse_and_save_shot(self, line):
@@ -182,6 +184,13 @@ class SerialManager:
                                 self.log("Gerät ist bereit (WSC=1K). Bitte Scheiben einführen.", "sys")
                             elif line.startswith("SCH="):
                                 self.parse_and_save_shot(line_clean)
+                            elif line.startswith("WSC=-"):
+                                if self.on_wsc_error_callback:
+                                    import re
+                                    match = re.search(r'WSC=-(\d+)', line_clean)
+                                    if match:
+                                        num_shots = int(match.group(1))
+                                        self.on_wsc_error_callback(line_clean, num_shots)
                 time.sleep(0.01)
             except Exception as e:
                 self.log(f"Verbindungsfehler im Reader: {e}", "err")
