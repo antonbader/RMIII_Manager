@@ -437,13 +437,14 @@ class AuswertungUI(ttk.Frame):
 
 
 class WSCErrorWindow(tk.Toplevel):
-    def __init__(self, parent, db_path, serial_manager, entry_id, wsc_code, num_shots, callback):
+    def __init__(self, parent, db_path, serial_manager, entry_id, wsc_code, num_shots, callback, is_shootcup=False):
         super().__init__(parent)
         self.db_path = db_path
         self.serial_manager = serial_manager
         self.entry_id = entry_id
         self.num_shots = num_shots
         self.callback = callback
+        self.is_shootcup = is_shootcup
 
         self.title("Überprüfung nötig")
         self.geometry("400x350")
@@ -461,21 +462,31 @@ class WSCErrorWindow(tk.Toplevel):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
 
-        # Get the last `num_shots` for this shooter
-        c.execute('''
-            SELECT id, schuss_nr, ringzahl, teiler, gueltigkeit
-            FROM Ergebnisse
-            WHERE turnier_schuetze_klasse_id=?
-            ORDER BY schuss_nr DESC
-            LIMIT ?
-        ''', (self.entry_id, self.num_shots))
-        last_n_shots = c.fetchall()
+        if self.is_shootcup:
+            c.execute('''
+                SELECT id, schuss_nr, ringzahl, teiler, gueltigkeit
+                FROM Shootcup_Ergebnisse
+                ORDER BY schuss_nr DESC
+                LIMIT ?
+            ''', (self.num_shots,))
+            last_n_shots = c.fetchall()
+            c.execute('SELECT COUNT(*) FROM Shootcup_Ergebnisse')
+            total_shots = c.fetchone()[0]
+        else:
+            # Get the last `num_shots` for this shooter
+            c.execute('''
+                SELECT id, schuss_nr, ringzahl, teiler, gueltigkeit
+                FROM Ergebnisse
+                WHERE turnier_schuetze_klasse_id=?
+                ORDER BY schuss_nr DESC
+                LIMIT ?
+            ''', (self.entry_id, self.num_shots))
+            last_n_shots = c.fetchall()
+            c.execute('SELECT COUNT(*) FROM Ergebnisse WHERE turnier_schuetze_klasse_id=?', (self.entry_id,))
+            total_shots = c.fetchone()[0]
 
         # We need them in ascending order and only those that are NOT 'Gültig'
         shots = sorted([s for s in last_n_shots if s[4] != 'Gültig'], key=lambda x: x[1])
-
-        c.execute('SELECT COUNT(*) FROM Ergebnisse WHERE turnier_schuetze_klasse_id=?', (self.entry_id,))
-        total_shots = c.fetchone()[0]
         conn.close()
         return shots, total_shots
 
@@ -486,7 +497,10 @@ class WSCErrorWindow(tk.Toplevel):
     def do_abbrechen(self):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
-        c.execute("DELETE FROM Ergebnisse WHERE turnier_schuetze_klasse_id=?", (self.entry_id,))
+        if self.is_shootcup:
+            c.execute("DELETE FROM Shootcup_Ergebnisse")
+        else:
+            c.execute("DELETE FROM Ergebnisse WHERE turnier_schuetze_klasse_id=?", (self.entry_id,))
         conn.commit()
         conn.close()
         self.serial_manager.send_prot("ABR")
@@ -504,13 +518,21 @@ class WSCErrorWindow(tk.Toplevel):
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
 
-            # Fetch ALL shots for this shooter to send them back to the device
-            c.execute('''
-                SELECT id, schuss_nr, ringzahl, teiler
-                FROM Ergebnisse
-                WHERE turnier_schuetze_klasse_id=?
-                ORDER BY schuss_nr ASC
-            ''', (self.entry_id,))
+            if self.is_shootcup:
+                c.execute('''
+                    SELECT id, schuss_nr, ringzahl, teiler
+                    FROM Shootcup_Ergebnisse
+                    ORDER BY schuss_nr ASC
+                ''')
+            else:
+                # Fetch ALL shots for this shooter to send them back to the device
+                c.execute('''
+                    SELECT id, schuss_nr, ringzahl, teiler
+                    FROM Ergebnisse
+                    WHERE turnier_schuetze_klasse_id=?
+                    ORDER BY schuss_nr ASC
+                ''', (self.entry_id,))
+
             all_shots = c.fetchall()
 
             # Track which ones are the "last targets" to update their status
@@ -524,7 +546,10 @@ class WSCErrorWindow(tk.Toplevel):
 
                 # Only update the database status for the recently checked ones
                 if shot_id in last_target_ids:
-                    c.execute("UPDATE Ergebnisse SET gueltigkeit='Überprüft' WHERE id=?", (shot_id,))
+                    if self.is_shootcup:
+                        c.execute("UPDATE Shootcup_Ergebnisse SET gueltigkeit='Überprüft' WHERE id=?", (shot_id,))
+                    else:
+                        c.execute("UPDATE Ergebnisse SET gueltigkeit='Überprüft' WHERE id=?", (shot_id,))
 
             conn.commit()
             conn.close()
@@ -535,11 +560,11 @@ class WSCErrorWindow(tk.Toplevel):
     def do_kontrolle(self):
         shots, total_shots = self.get_last_target_shots()
         self.destroy()
-        KontrolleWindow(self.master, self.db_path, self.serial_manager, self.entry_id, shots, total_shots, self.callback)
+        KontrolleWindow(self.master, self.db_path, self.serial_manager, self.entry_id, shots, total_shots, self.callback, self.is_shootcup)
 
 
 class KontrolleWindow(tk.Toplevel):
-    def __init__(self, parent, db_path, serial_manager, entry_id, shots, total_shots, callback):
+    def __init__(self, parent, db_path, serial_manager, entry_id, shots, total_shots, callback, is_shootcup=False):
         super().__init__(parent)
         self.db_path = db_path
         self.serial_manager = serial_manager
@@ -547,6 +572,7 @@ class KontrolleWindow(tk.Toplevel):
         self.shots = shots
         self.total_shots = total_shots
         self.callback = callback
+        self.is_shootcup = is_shootcup
         self.entries = []
 
         self.title("Manuelle Kontrolle")
@@ -622,13 +648,20 @@ class KontrolleWindow(tk.Toplevel):
                 "schuss_nr": entry["schuss_nr"]
             }
 
-        # Fetch ALL shots for this shooter
-        c.execute('''
-            SELECT id, schuss_nr, ringzahl, teiler
-            FROM Ergebnisse
-            WHERE turnier_schuetze_klasse_id=?
-            ORDER BY schuss_nr ASC
-        ''', (self.entry_id,))
+        if self.is_shootcup:
+            c.execute('''
+                SELECT id, schuss_nr, ringzahl, teiler
+                FROM Shootcup_Ergebnisse
+                ORDER BY schuss_nr ASC
+            ''')
+        else:
+            # Fetch ALL shots for this shooter
+            c.execute('''
+                SELECT id, schuss_nr, ringzahl, teiler
+                FROM Ergebnisse
+                WHERE turnier_schuetze_klasse_id=?
+                ORDER BY schuss_nr ASC
+            ''', (self.entry_id,))
         all_shots = c.fetchall()
 
         for shot in all_shots:
@@ -641,11 +674,18 @@ class KontrolleWindow(tk.Toplevel):
                 self.serial_manager.send_prot(s_cmd)
 
                 # Update DB
-                c.execute('''
-                    UPDATE Ergebnisse
-                    SET ringzahl=?, teiler=?, gueltigkeit='Überprüft'
-                    WHERE id=?
-                ''', (edit_data['new_ring'], edit_data['new_teiler'], shot_id))
+                if self.is_shootcup:
+                    c.execute('''
+                        UPDATE Shootcup_Ergebnisse
+                        SET ringzahl=?, teiler=?, gueltigkeit='Überprüft'
+                        WHERE id=?
+                    ''', (edit_data['new_ring'], edit_data['new_teiler'], shot_id))
+                else:
+                    c.execute('''
+                        UPDATE Ergebnisse
+                        SET ringzahl=?, teiler=?, gueltigkeit='Überprüft'
+                        WHERE id=?
+                    ''', (edit_data['new_ring'], edit_data['new_teiler'], shot_id))
             else:
                 # It's an older shot (not part of the current target/kontrolle)
                 s_cmd = f"S={schuss_nr};{ringzahl};{teiler};U"
