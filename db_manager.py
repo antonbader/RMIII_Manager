@@ -78,6 +78,32 @@ def init_db():
     )
     ''')
 
+
+    # Tabellen für Shootcup
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS Shootcup_Presets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        sch TEXT DEFAULT 'LG10',
+        ria TEXT DEFAULT 'ZR',
+        tea TEXT DEFAULT 'KT',
+        teg INTEGER DEFAULT 1000,
+        ssc INTEGER DEFAULT 1,
+        sge INTEGER DEFAULT 40
+    )
+    ''')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS Shootcup_Ergebnisse (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        schuss_nr INTEGER,
+        ringzahl REAL,
+        teiler REAL,
+        winkel REAL,
+        gueltigkeit TEXT
+    )
+    ''')
+
     conn.commit()
     conn.close()
 

@@ -8,6 +8,7 @@ from ui_klassen import KlassenUI
 from ui_schuetzen import SchuetzenUI
 from ui_turniere import TurniereUI
 from ui_auswertung import AuswertungUI
+from ui_auswertung_shootcup import AuswertungShootcupUI
 from ui_verbindung import VerbindungUI
 from ui_legacy import LegacyUI
 
@@ -32,6 +33,7 @@ class DisagRM3App(tk.Tk):
         self.tab_schuetzen = SchuetzenUI(self.notebook, DB_PATH)
         self.tab_turniere = TurniereUI(self.notebook, DB_PATH)
         self.tab_auswertung = AuswertungUI(self.notebook, DB_PATH, self.serial_manager)
+        self.tab_auswertung_shootcup = AuswertungShootcupUI(self.notebook, DB_PATH, self.serial_manager)
         self.tab_verbindung = VerbindungUI(self.notebook, self.serial_manager)
         self.tab_legacy = LegacyUI(self.notebook)
 
@@ -39,6 +41,7 @@ class DisagRM3App(tk.Tk):
         self.notebook.add(self.tab_schuetzen, text="Schützenverwaltung")
         self.notebook.add(self.tab_turniere, text="Turnierverwaltung")
         self.notebook.add(self.tab_auswertung, text="Auswertung")
+        self.notebook.add(self.tab_auswertung_shootcup, text="Auswertung Shootcup")
         self.notebook.add(self.tab_verbindung, text="Verbindung")
         self.notebook.add(self.tab_legacy, text="Verbindungstest")
 

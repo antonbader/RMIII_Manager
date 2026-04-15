@@ -21,6 +21,7 @@ class SerialManager:
         self.current_shots = 0
         self.on_shot_callback = None
         self.on_wsc_error_callback = None
+        self.is_shootcup = False
 
     def add_log_widget(self, widget):
         if widget not in self.log_widgets:
@@ -90,18 +91,22 @@ class SerialManager:
                 self.log(f"Sende-Fehler: {e}", "err")
         threading.Thread(target=run, daemon=True).start()
 
-    def set_active_auswertung(self, entry_id, sge_target, callback, error_callback=None):
+    def set_active_auswertung(self, entry_id, sge_target, callback, error_callback=None, is_shootcup=False):
         self.active_entry_id = entry_id
         self.sge_target = sge_target
         self.current_shots = 0
         self.on_shot_callback = callback
         self.on_wsc_error_callback = error_callback
-        self.log(f"Auswertung konfiguriert: Eintrag={entry_id}, Max. Schüsse={sge_target}", "sys")
+        self.is_shootcup = is_shootcup
+        self.log(f"Auswertung konfiguriert: Eintrag={entry_id}, Max. Schüsse={sge_target}, Shootcup={is_shootcup}", "sys")
 
     def parse_and_save_shot(self, line):
         # Format: SCH=Schussnummer;Ringzahl;Teiler; Winkel;Gültigkeit
         # Example: SCH=1;9.0;459.1;18.0;G$
-        if not self.active_entry_id:
+        # if not self.active_entry_id:
+        #    return
+        # Removed the early return for active_entry_id since shootcup might not use it in the same way, but let's check it properly below.
+        if not self.is_shootcup and not self.active_entry_id:
             return
 
         try:
@@ -122,20 +127,36 @@ class SerialManager:
 
                 conn = sqlite3.connect(self.db_path)
                 c = conn.cursor()
-                # Upsert or Insert based on Schuss_nr
-                c.execute("SELECT id FROM Ergebnisse WHERE turnier_schuetze_klasse_id=? AND schuss_nr=?", (self.active_entry_id, schuss_nr))
-                if c.fetchone():
-                    c.execute('''
-                        UPDATE Ergebnisse
-                        SET ringzahl=?, teiler=?, winkel=?, gueltigkeit=?
-                        WHERE turnier_schuetze_klasse_id=? AND schuss_nr=?
-                    ''', (ringzahl, teiler, winkel, g_text, self.active_entry_id, schuss_nr))
+
+                if self.is_shootcup:
+                    c.execute("SELECT id FROM Shootcup_Ergebnisse WHERE schuss_nr=?", (schuss_nr,))
+                    if c.fetchone():
+                        c.execute('''
+                            UPDATE Shootcup_Ergebnisse
+                            SET ringzahl=?, teiler=?, winkel=?, gueltigkeit=?
+                            WHERE schuss_nr=?
+                        ''', (ringzahl, teiler, winkel, g_text, schuss_nr))
+                    else:
+                        c.execute('''
+                            INSERT INTO Shootcup_Ergebnisse (schuss_nr, ringzahl, teiler, winkel, gueltigkeit)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (schuss_nr, ringzahl, teiler, winkel, g_text))
+                        self.current_shots += 1
                 else:
-                    c.execute('''
-                        INSERT INTO Ergebnisse (turnier_schuetze_klasse_id, schuss_nr, ringzahl, teiler, winkel, gueltigkeit)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (self.active_entry_id, schuss_nr, ringzahl, teiler, winkel, g_text))
-                    self.current_shots += 1
+                    # Upsert or Insert based on Schuss_nr
+                    c.execute("SELECT id FROM Ergebnisse WHERE turnier_schuetze_klasse_id=? AND schuss_nr=?", (self.active_entry_id, schuss_nr))
+                    if c.fetchone():
+                        c.execute('''
+                            UPDATE Ergebnisse
+                            SET ringzahl=?, teiler=?, winkel=?, gueltigkeit=?
+                            WHERE turnier_schuetze_klasse_id=? AND schuss_nr=?
+                        ''', (ringzahl, teiler, winkel, g_text, self.active_entry_id, schuss_nr))
+                    else:
+                        c.execute('''
+                            INSERT INTO Ergebnisse (turnier_schuetze_klasse_id, schuss_nr, ringzahl, teiler, winkel, gueltigkeit)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        ''', (self.active_entry_id, schuss_nr, ringzahl, teiler, winkel, g_text))
+                        self.current_shots += 1
 
                 conn.commit()
                 conn.close()
