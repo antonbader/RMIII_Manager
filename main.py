@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk
 import sqlite3
+import json
+import os
 
 from db_manager import DB_PATH, init_db
 from serial_manager import SerialManager
@@ -43,7 +45,18 @@ class DisagRM3App(tk.Tk):
         self.notebook.add(self.tab_auswertung, text="Auswertung")
         self.notebook.add(self.tab_auswertung_shootcup, text="Auswertung Shootcup")
         self.notebook.add(self.tab_verbindung, text="Verbindung")
-        self.notebook.add(self.tab_legacy, text="Verbindungstest")
+
+        show_legacy_tab = False
+        if os.path.exists('config.json'):
+            try:
+                with open('config.json', 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    show_legacy_tab = config.get('show_verbindungstest_tab', False)
+            except Exception as e:
+                print(f"Failed to load config.json: {e}")
+
+        if show_legacy_tab:
+            self.notebook.add(self.tab_legacy, text="Verbindungstest")
 
     def destroy(self):
         # Cleanup serial on exit
