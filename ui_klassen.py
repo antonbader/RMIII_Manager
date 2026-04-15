@@ -6,7 +6,7 @@ class KlassenUI(ttk.Frame):
     def __init__(self, parent, db_path):
         super().__init__(parent)
         self.db_path = db_path
-        self.pack(fill="both", expand=True, padx=10, pady=10)
+
 
         # Form
         form_frame = ttk.LabelFrame(self, text="Neue / Bearbeitete Klasse", padding=10)

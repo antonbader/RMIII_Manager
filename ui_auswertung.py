@@ -12,8 +12,6 @@ class AuswertungUI(ttk.Frame):
         self.db_path = db_path
         self.serial_manager = serial_manager
 
-        self.pack(fill="both", expand=True, padx=10, pady=10)
-
         # TOP FRAME: Select Tournament
         top_frame = ttk.LabelFrame(self, text="Turnierauswahl", padding=10)
         top_frame.pack(fill="x", pady=5)

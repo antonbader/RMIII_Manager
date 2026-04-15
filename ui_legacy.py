@@ -11,7 +11,6 @@ STX, ENQ, ACK, NAK, CR = b'\x02', b'\x05', b'\x06', b'\x15', b'\x0D'
 class LegacyUI(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
-        self.pack(fill="both", expand=True)
 
         self.ser = None
         self.running = False
