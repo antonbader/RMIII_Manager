@@ -7,7 +7,7 @@ class VerbindungUI(ttk.Frame):
     def __init__(self, parent, serial_manager):
         super().__init__(parent)
         self.serial_manager = serial_manager
-        self.pack(fill="both", expand=True, padx=10, pady=10)
+
 
         # TOP FRAME: Connection settings
         conn_frame = ttk.LabelFrame(self, text="Verbindungseinstellungen", padding=10)
