@@ -78,6 +78,20 @@ class AuswertungUI(ttk.Frame):
         ttk.Button(export_f, text="Export Excel", command=self.export_excel).pack(side="right", padx=5)
         ttk.Button(export_f, text="Export PDF", command=self.export_pdf).pack(side="right", padx=5)
 
+        # SUMMARY FRAME (Sum of rings, best teiler)
+        self.summary_frame = ttk.Frame(right_frame)
+        self.summary_frame.pack(fill="x", pady=5)
+
+        self.lbl_sum_rings_text = ttk.Label(self.summary_frame, text="Summe Ringzahlen:", font=("Helvetica", 10, "bold"))
+        self.lbl_sum_rings_text.pack(side="left", padx=(5, 2))
+        self.lbl_sum_rings_val = ttk.Label(self.summary_frame, text="-", font=("Helvetica", 10))
+        self.lbl_sum_rings_val.pack(side="left", padx=(0, 15))
+
+        self.lbl_best_teiler_text = ttk.Label(self.summary_frame, text="Bester Teiler:", font=("Helvetica", 10, "bold"))
+        self.lbl_best_teiler_text.pack(side="left", padx=(5, 2))
+        self.lbl_best_teiler_val = ttk.Label(self.summary_frame, text="-", font=("Helvetica", 10))
+        self.lbl_best_teiler_val.pack(side="left", padx=(0, 5))
+
         # BOTTOM FRAME: Log
         log_frame = ttk.LabelFrame(self, text="Kommunikation mit DISAG RM III", padding=5)
         log_frame.pack(fill="x", pady=5)
@@ -244,6 +258,36 @@ class AuswertungUI(ttk.Frame):
             self.tree_res.insert("", "end", values=row)
         conn.close()
 
+        self.update_summary()
+
+    def update_summary(self):
+        # Default to '-'
+        sum_rings_str = "-"
+        best_teiler_str = "-"
+
+        # Only calculate if we are viewing a single participant's results
+        if not self.show_all_mode and self.active_entry_id:
+            conn = self.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT SUM(ringzahl), MIN(teiler)
+                FROM Ergebnisse
+                WHERE turnier_schuetze_klasse_id = ?
+            ''', (self.active_entry_id,))
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                sum_rings, best_teiler = row
+                if sum_rings is not None:
+                    # Format with comma as decimal separator
+                    sum_rings_str = f"{sum_rings:.1f}".replace('.', ',')
+                if best_teiler is not None:
+                    best_teiler_str = f"{best_teiler:.1f}".replace('.', ',')
+
+        self.lbl_sum_rings_val.config(text=sum_rings_str)
+        self.lbl_best_teiler_val.config(text=best_teiler_str)
+
     def sort_res_column(self, col, reverse):
         l = [(self.tree_res.set(k, col), k) for k in self.tree_res.get_children('')]
         try: l.sort(key=lambda t: float(t[0]), reverse=reverse)
@@ -260,6 +304,19 @@ class AuswertungUI(ttk.Frame):
         return pd.DataFrame(data, columns=cols)
 
     def export_excel(self):
+        if self.show_all_mode:
+            # Ask user if they want summary or detailed export
+            answer = messagebox.askyesnocancel("Export",
+                                               "Möchten Sie eine Zusammenfassung (Summe Ringe & Bester Teiler pro Schütze/Klasse) exportieren?\n\n"
+                                               "'Ja' = Zusammenfassung exportieren\n"
+                                               "'Nein' = Detaillierte Einzelergebnisse exportieren\n"
+                                               "'Abbrechen' = Export abbrechen")
+            if answer is None:
+                return
+            elif answer is True:
+                self.export_excel_summary()
+                return
+
         df = self.get_res_data_as_df()
         if df.empty:
             messagebox.showinfo("Export", "Keine Daten zum Exportieren vorhanden.")
@@ -267,8 +324,74 @@ class AuswertungUI(ttk.Frame):
 
         path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")])
         if path:
+            self.format_df_german_locale(df)
             df.to_excel(path, index=False)
             messagebox.showinfo("Export", f"Erfolgreich als Excel gespeichert:\n{path}")
+
+    def export_excel_summary(self):
+        if not self.current_turnier_id:
+            messagebox.showinfo("Export", "Kein Turnier ausgewählt.")
+            return
+
+        # Fetch all results for current turnier
+        conn = self.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT s.name, k.name, e.ringzahl, e.teiler
+            FROM Ergebnisse e
+            JOIN Turnier_Schuetzen_Klassen tsk ON e.turnier_schuetze_klasse_id = tsk.id
+            JOIN Schuetzen s ON tsk.schuetze_id = s.id
+            JOIN Klassen k ON tsk.klasse_id = k.id
+            WHERE tsk.turnier_id = ?
+        ''', (self.current_turnier_id,))
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            messagebox.showinfo("Export", "Keine Daten zum Exportieren vorhanden.")
+            return
+
+        # Use pandas to group by Shooter and Class
+        df = pd.DataFrame(rows, columns=["Schütze", "Klasse", "Ringzahl", "Teiler"])
+
+        # We need to calculate Sum of Ringzahl and Min of Teiler
+        summary_df = df.groupby(["Schütze", "Klasse"]).agg(
+            Summe_Ringzahlen=("Ringzahl", "sum"),
+            Bester_Teiler=("Teiler", "min")
+        ).reset_index()
+
+        path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")])
+        if path:
+            self.format_df_german_locale(summary_df)
+            summary_df.to_excel(path, index=False)
+            messagebox.showinfo("Export", f"Erfolgreich als Zusammenfassung in Excel gespeichert:\n{path}")
+
+    def format_df_german_locale(self, df):
+        # Replace dot with comma for all float columns to match German locale
+        for col in df.select_dtypes(include=['float64', 'float32']).columns:
+            df[col] = df[col].apply(lambda x: f"{x:.1f}".replace('.', ',') if pd.notnull(x) else x)
+
+        # Also convert any string representations that might be numeric
+        for col in df.columns:
+            # We also check for int and float that might have been loaded by pandas or converted to string from treeview
+            df[col] = df[col].apply(lambda x: self.format_value(x))
+
+    def format_value(self, x):
+        if pd.isnull(x):
+            return x
+        if isinstance(x, float):
+            return f"{x:.1f}".replace('.', ',')
+        if isinstance(x, str):
+            if self.is_float_string(x):
+                return x.replace('.', ',')
+        return x
+
+    def is_float_string(self, s):
+        try:
+            float(s)
+            return '.' in s
+        except ValueError:
+            return False
 
     def export_pdf(self):
         df = self.get_res_data_as_df()
