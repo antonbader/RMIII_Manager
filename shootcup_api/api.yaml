@@ -1,0 +1,71 @@
+openapi: 3.0.0
+info:
+  title: ShootCup REST API
+  description: Schnittstelle zur automatisierten Übermittlung von Schießergebnissen an die ShootCup Software.
+  version: 1.0.0
+servers:
+  - url: http://localhost:5003
+    description: Lokaler Server (Port konfigurierbar in config.json)
+paths:
+  /api/score:
+    post:
+      summary: Übermittlung eines Schießergebnisses
+      description: |
+        Erwartet einen Namen, einen Score (Teiler oder Ringzahl), den Typ des Scores und optional eine Klasse.
+        Die Daten werden so verarbeitet, als hätte der Nutzer sie manuell in die Software eingegeben.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - score
+                - type
+              properties:
+                name:
+                  type: string
+                  description: Der Name des Schützen.
+                  example: Max Mustermann
+                score:
+                  type: number
+                  format: float
+                  description: Das Ergebnis (als Kommazahl möglich).
+                  example: 10.5
+                type:
+                  type: string
+                  description: Die Art der Wertung. Muss entweder "teiler" oder "ringzahl" sein.
+                  enum: [teiler, ringzahl]
+                  example: teiler
+                klasse:
+                  type: string
+                  description: Optionale Klasse des Schützen (z.B. Jugend, Schützenklasse).
+                  example: Schützenklasse
+      responses:
+        '200':
+          description: Ergebnis erfolgreich hinzugefügt.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  message:
+                    type: string
+                    example: Data added successfully
+        '400':
+          description: Fehlerhafte Anfrage (z.B. fehlende Felder oder falscher Datentyp).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: error
+                  message:
+                    type: string
+                    example: Missing required field 'name'
