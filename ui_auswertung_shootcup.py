@@ -342,21 +342,20 @@ class AuswertungShootcupUI(ttk.Frame):
             if auswertung_type == "ringzahl":
                 data = {
                     "name": schuetze,
-                    "score": float(sum_rings),
+                    "scores": [float(sum_rings)],
                     "type": "ringzahl",
                     "klasse": klasse
                 }
                 self.send_post(api_url, data)
             else: # teiler
-                for shot in shots:
-                    teiler = shot[2]
-                    data = {
-                        "name": schuetze,
-                        "score": float(teiler),
-                        "type": "teiler",
-                        "klasse": klasse
-                    }
-                    self.send_post(api_url, data)
+                teiler_list = [float(shot[2]) for shot in shots]
+                data = {
+                    "name": schuetze,
+                    "scores": teiler_list,
+                    "type": "teiler",
+                    "klasse": klasse
+                }
+                self.send_post(api_url, data)
 
             messagebox.showinfo("Erfolg", "Ergebnisse wurden erfolgreich übertragen.")
 
