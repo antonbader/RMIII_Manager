@@ -119,11 +119,14 @@ class SerialManager:
 
                 gueltigkeit_raw = data[4].strip()
                 # Parse G, K, U from the first character (ignore checksum chars like $)
-                gueltigkeit_char = gueltigkeit_raw[0].upper()
-                if gueltigkeit_char == 'G': g_text = "Gültig"
-                elif gueltigkeit_char == 'K': g_text = "Kontrolle"
-                elif gueltigkeit_char == 'U': g_text = "Ungültig"
-                else: g_text = gueltigkeit_raw
+                if gueltigkeit_raw:
+                    gueltigkeit_char = gueltigkeit_raw[0].upper()
+                    if gueltigkeit_char == 'G': g_text = "Gültig"
+                    elif gueltigkeit_char == 'K': g_text = "Kontrolle"
+                    elif gueltigkeit_char == 'U': g_text = "Ungültig"
+                    else: g_text = gueltigkeit_raw
+                else:
+                    g_text = "Kontrolle"
 
                 conn = sqlite3.connect(self.db_path)
                 c = conn.cursor()
