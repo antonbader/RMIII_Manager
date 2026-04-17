@@ -21,17 +21,23 @@ paths:
               type: object
               required:
                 - name
-                - score
                 - type
               properties:
                 name:
                   type: string
                   description: Der Name des Schützen.
                   example: Max Mustermann
+                scores:
+                  type: array
+                  items:
+                    type: number
+                    format: float
+                  description: Eine Liste von Ergebnissen (als Kommazahlen möglich). Alternativ kann aus Abwärtskompatibilitätsgründen auch weiterhin ein einzelnes Feld 'score' gesendet werden.
+                  example: [10.5, 9.8, 12.1]
                 score:
                   type: number
                   format: float
-                  description: Das Ergebnis (als Kommazahl möglich).
+                  description: Veraltet. Ein einzelnes Ergebnis. Bitte stattdessen 'scores' verwenden.
                   example: 10.5
                 type:
                   type: string
